@@ -1,6 +1,8 @@
 import torch
 from torch.utils.data import TensorDataset, random_split
+from torch import nn
 import torch.nn.functional as F
+from torchvision import datasets, transforms
 import numpy as np
 import beaupy
 from rich.console import Console
@@ -19,29 +21,25 @@ def load_data(n=10000, split_ratio=0.8, seed=42):
     # Fix random seed for reproducibility
     torch.manual_seed(seed)
 
-    x_noise = torch.rand(n) * 0.02
-    x = torch.linspace(0, 1, n) + x_noise
-    x = x.clamp(0, 1) # Fix x to be in [0, 1]
-
-    noise_level = 0.05
-    y = (
-        1.0 * torch.sin(4 * pi * x)
-        + 0.5 * torch.sin(10 * pi * x)
-        + 1.5 * (x**2)
-        + torch.randn(n) * noise_level
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,)),
+        ]
     )
 
-    x = x.view(-1, 1)
-    y = y.view(-1, 1)
-
-    full_dataset = TensorDataset(x, y)
-
-    train_size = int(n * split_ratio)
-    val_size = n - train_size
-
-    generator = torch.Generator().manual_seed(seed)
-    train_dataset, val_dataset = random_split(
-        full_dataset, [train_size, val_size], generator=generator
+    # Load MNIST dataset
+    train_dataset = datasets.MNIST(
+        root="./data",
+        train=True,
+        download=True,
+        transform=transform,
+    )
+    val_dataset = datasets.MNIST(
+        root="./data",
+        train=False,
+        download=True,
+        transform=transform,
     )
 
     return train_dataset, val_dataset
@@ -154,37 +152,52 @@ class Trainer:
     def train_epoch(self, dl_train):
         self.model.train()
         train_loss = 0
+        total = 0
+        correct = 0
         for x, y in dl_train:
             x = x.to(self.device)
             y = y.to(self.device)
             y_pred = self.step(x)
             loss = self.criterion(y_pred, y)
             train_loss += loss.item()
+
+            # Calculate accuracy
+            _, predicted = torch.max(y_pred, 1)
+            total += y.size(0)
+            correct += (predicted == y).sum().item()
+
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
         train_loss /= len(dl_train)
-        return train_loss
+        train_acc = 100 * correct / total if total > 0 else 0
+        return train_loss, train_acc
 
     def val_epoch(self, dl_val):
         self.model.eval()
         val_loss = 0
+        total = 0
+        correct = 0
         for x, y in dl_val:
             x = x.to(self.device)
             y = y.to(self.device)
             y_pred = self.step(x)
             loss = self.criterion(y_pred, y)
             val_loss += loss.item()
+            _, predicted = torch.max(y_pred, 1)
+            total += y.size(0)
+            correct += (predicted == y).sum().item()
         val_loss /= len(dl_val)
-        return val_loss
+        val_acc = 100 * correct / total if total > 0 else 0
+        return val_loss, val_acc
 
     def train(self, dl_train, dl_val, epochs):
         val_loss = 0
         val_losses = []
 
         for epoch in range(epochs):
-            train_loss = self.train_epoch(dl_train)
-            val_loss = self.val_epoch(dl_val)
+            train_loss, train_acc = self.train_epoch(dl_train)
+            val_loss, val_acc = self.val_epoch(dl_val)
             val_losses.append(val_loss)
 
             # Early stopping if loss becomes NaN
@@ -202,6 +215,8 @@ class Trainer:
             log_dict = {
                 "train_loss": train_loss,
                 "val_loss": val_loss,
+                "train_acc": train_acc,
+                "val_acc": val_acc,
                 "lr": self.optimizer.param_groups[0]["lr"],
             }
 
@@ -278,7 +293,7 @@ def run(
                 model,
                 optimizer,
                 scheduler,
-                criterion=F.mse_loss,
+                criterion=nn.CrossEntropyLoss(label_smoothing=0.1),
                 early_stopping_config=run_config.early_stopping_config,
                 device=device,
                 trial=trial,
