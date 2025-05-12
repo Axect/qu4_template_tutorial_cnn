@@ -17,7 +17,7 @@ import math
 from math import pi
 
 
-def load_data(n=10000, split_ratio=0.8, seed=42):
+def load_data(seed=42):
     # Fix random seed for reproducibility
     torch.manual_seed(seed)
 
