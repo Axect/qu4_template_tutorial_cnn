@@ -9,7 +9,7 @@ seeds: [89, 231, 928]
 net_config:
   num_conv_layers: 3
   num_fc_layers: 2
-  conv_channels: 16
+  conv_channels: 8
   fc_nodes: 128
 optimizer_config:
   lr: 1.e-3 # Must contain dot for float
